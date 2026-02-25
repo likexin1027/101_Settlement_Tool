@@ -54,6 +54,30 @@ def create_default_mapping():
     df = pd.DataFrame(rows)
     return df
 
+def load_default_mapping():
+    try:
+        try:
+            mdf = pd.read_csv("奖励金额t.csv")
+        except:
+            mdf = pd.read_csv("奖励金额t.csv", encoding="gbk")
+        cols = set(mdf.columns)
+        need_plat = "平台" in cols
+        has_val = "阈值数值" in cols
+        has_lab = "阈值标签" in cols
+        has_amt = "奖励金额" in cols
+        if need_plat and has_amt and (has_val or has_lab):
+            out = mdf.copy()
+            if not has_val and has_lab:
+                out["阈值数值"] = out["阈值标签"].apply(normalize_label_to_value)
+            if not has_lab and has_val:
+                out["阈值标签"] = out["阈值数值"].apply(value_to_label)
+            out = out[out["平台"].isin(["B站", "小红书", "抖音", "视频号"])]
+            out = out[["平台", "阈值标签", "阈值数值", "奖励金额"]].dropna(subset=["阈值数值", "奖励金额"])
+            return out
+        return create_default_mapping()
+    except:
+        return create_default_mapping()
+
 def normalize_label_to_value(lab):
     if pd.isna(lab):
         return None
@@ -115,6 +139,30 @@ def describe_excel_error(err, filename):
     msg += f"。原始信息：{str(err)}"
     return msg
 
+def read_xlsx_robust(bio):
+    try:
+        return pd.read_excel(bio, engine="calamine")
+    except:
+        bio.seek(0)
+        try:
+            return pd.read_excel(bio, engine="openpyxl")
+        except:
+            bio.seek(0)
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(bio, data_only=True, read_only=True)
+                ws = wb.active
+                data = []
+                for row in ws.iter_rows(values_only=True):
+                    data.append(list(row))
+                if not data:
+                    return pd.DataFrame()
+                header = [str(x) if x is not None else "" for x in data[0]]
+                rows = data[1:]
+                return pd.DataFrame(rows, columns=header)
+            except Exception as e:
+                raise e
+
 def base_reward(plat, views, lookup):
     if plat not in lookup:
         return 0.0
@@ -170,51 +218,53 @@ def filter_banned(df, text_cols):
 def render():
     st.title("101俱乐部活动奖金结算")
     st.caption("上传数据，配置基础奖励，自动计算限时与优秀奖励，按作者限额输出结算结果")
-    uploaded = st.file_uploader("上传Excel或CSV文件", type=["xlsx", "xls", "csv"])
-    mapping = create_default_mapping()
-    cfg = st.file_uploader("可选：上传奖励配置（Excel/CSV）", type=["xlsx", "xls", "csv"], key="cfg")
-    if cfg is not None:
-        n = getattr(cfg, "name", "").lower()
-        try:
-            if n.endswith(".csv"):
-                try:
-                    mdf = pd.read_csv(cfg)
-                except:
-                    cfg.seek(0)
-                    mdf = pd.read_csv(cfg, encoding="gbk")
-            else:
-                data = cfg.read()
-                bio = io.BytesIO(data)
-                if n.endswith(".xlsx"):
+    tabs = st.tabs(["结算中心", "规则设置"])
+    with tabs[1]:
+        mapping = load_default_mapping()
+        cfg = st.file_uploader("上传奖励配置（Excel/CSV）", type=["xlsx", "xls", "csv"], key="cfg")
+        if cfg is not None:
+            n = getattr(cfg, "name", "").lower()
+            try:
+                if n.endswith(".csv"):
                     try:
-                        mdf = pd.read_excel(bio, engine="calamine")
+                        mdf = pd.read_csv(cfg)
                     except:
-                        bio.seek(0)
-                        mdf = pd.read_excel(bio, engine="openpyxl")
-                elif n.endswith(".xls"):
-                    mdf = pd.read_excel(bio, engine="xlrd")
+                        cfg.seek(0)
+                        mdf = pd.read_csv(cfg, encoding="gbk")
                 else:
-                    bio.seek(0)
-                    mdf = pd.read_excel(bio)
-        except:
-            mdf = None
-        if mdf is not None:
-            cols = set(mdf.columns)
-            need_plat = "平台" in cols
-            has_val = "阈值数值" in cols
-            has_lab = "阈值标签" in cols
-            has_amt = "奖励金额" in cols
-            if need_plat and has_amt and (has_val or has_lab):
-                out = mdf.copy()
-                if not has_val and has_lab:
-                    out["阈值数值"] = out["阈值标签"].apply(normalize_label_to_value)
-                if not has_lab and has_val:
-                    out["阈值标签"] = out["阈值数值"].apply(value_to_label)
-                out = out[out["平台"].isin(["B站", "小红书", "抖音", "视频号"])]
-                out = out[["平台", "阈值标签", "阈值数值", "奖励金额"]].dropna(subset=["阈值数值", "奖励金额"])
-                mapping = out
-    st.subheader("基础奖励配置")
-    mapping = st.data_editor(mapping, num_rows="dynamic", use_container_width=True)
+                    data = cfg.read()
+                    bio = io.BytesIO(data)
+                    if n.endswith(".xlsx"):
+                        try:
+                            mdf = pd.read_excel(bio, engine="calamine")
+                        except:
+                            bio.seek(0)
+                            mdf = pd.read_excel(bio, engine="openpyxl")
+                    elif n.endswith(".xls"):
+                        mdf = pd.read_excel(bio, engine="xlrd")
+                    else:
+                        bio.seek(0)
+                        mdf = pd.read_excel(bio)
+            except:
+                mdf = None
+            if mdf is not None:
+                cols = set(mdf.columns)
+                need_plat = "平台" in cols
+                has_val = "阈值数值" in cols
+                has_lab = "阈值标签" in cols
+                has_amt = "奖励金额" in cols
+                if need_plat and has_amt and (has_val or has_lab):
+                    out = mdf.copy()
+                    if not has_val and has_lab:
+                        out["阈值数值"] = out["阈值标签"].apply(normalize_label_to_value)
+                    if not has_lab and has_val:
+                        out["阈值标签"] = out["阈值数值"].apply(value_to_label)
+                    out = out[out["平台"].isin(["B站", "小红书", "抖音", "视频号"])]
+                    out = out[["平台", "阈值标签", "阈值数值", "奖励金额"]].dropna(subset=["阈值数值", "奖励金额"])
+                    mapping = out
+        mapping = st.data_editor(mapping, num_rows="dynamic", width="stretch")
+    with tabs[0]:
+        uploaded = st.file_uploader("上传Excel或CSV文件", type=["xlsx", "xls", "csv"])
     lookup = build_reward_lookup(mapping)
     if uploaded is None:
         return
@@ -234,11 +284,7 @@ def render():
             data = uploaded.read()
             bio = io.BytesIO(data)
             if name.endswith(".xlsx"):
-                try:
-                    df = pd.read_excel(bio, engine="calamine")
-                except:
-                    bio.seek(0)
-                    df = pd.read_excel(bio, engine="openpyxl")
+                df = read_xlsx_robust(bio)
             elif name.endswith(".xls"):
                 df = pd.read_excel(bio, engine="xlrd")
             else:
@@ -267,16 +313,25 @@ def render():
     kept = pick_top5_per_author(kept)
     result = kept.copy()
     result = result[["渠道", "账号名称", "播放量", "点赞", "作品类型", "基础奖励", "限时奖励", "优秀奖励", "总奖励", "是否计入结算"]]
-    st.subheader("结算预览")
-    st.dataframe(result, use_container_width=True)
-    st.subheader("被排除内容")
-    if not removed.empty:
-        st.dataframe(removed, use_container_width=True)
-    summary = result[result["是否计入结算"]].groupby("账号名称", as_index=False)["总奖励"].sum().rename(columns={"总奖励": "结算金额"})
-    st.subheader("作者汇总")
-    st.dataframe(summary, use_container_width=True)
-    total_payout = summary["结算金额"].sum() if not summary.empty else 0.0
-    st.metric("总结算金额", f"{total_payout:,.2f} 元")
+    with tabs[0]:
+        summary = result[result["是否计入结算"]].groupby("账号名称", as_index=False)["总奖励"].sum().rename(columns={"总奖励": "结算金额"})
+        total_payout = summary["结算金额"].sum() if not summary.empty else 0.0
+        total_views = result[result["是否计入结算"]]["播放量数值"].sum() if "播放量数值" in result.columns else 0.0
+        counted = int(result["是否计入结算"].sum())
+        authors = summary.shape[0]
+        cols = st.columns(4)
+        cols[0].metric("总结算金额", f"{total_payout:,.2f} 元")
+        cols[1].metric("总播放量", f"{int(total_views):,}")
+        cols[2].metric("计入条目数", f"{counted}")
+        cols[3].metric("作者数", f"{authors}")
+        st.subheader("结算预览")
+        st.dataframe(result, width="stretch")
+        st.subheader("奖金Top5作者")
+        top5 = summary.sort_values("结算金额", ascending=False).head(5)
+        st.bar_chart(top5.set_index("账号名称"))
+        st.subheader("被排除内容")
+        if not removed.empty:
+            st.dataframe(removed, width="stretch")
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         result.to_excel(writer, index=False, sheet_name="结算明细")
